@@ -226,6 +226,7 @@ class profile:
             self.use_device = use_device
         # TODO Consider changing function_events into data structure with size cap
         self.function_events: Optional[EventList] = None
+        self.old_function_events: Optional[EventList] = None
         self.entered = False
         self.record_shapes = record_shapes
         self.with_flops = with_flops
@@ -348,7 +349,7 @@ class profile:
 
         old_function_events: Optional[EventList] = None
         if self.function_events and self.acc_events:
-            old_function_events = self.function_events
+            self.old_function_events = self.function_events
 
         t0 = perf_counter_ns()
 
@@ -358,6 +359,27 @@ class profile:
         self.profiling_end_time_ns = t0
 
         _run_on_profiler_stop()
+
+        self._stats.profiling_window_duration_sec = (
+            (self.profiling_end_time_ns - self.profiling_start_time_ns) * 1.0 / 1e9
+        )
+        return False
+
+    def __repr__(self):
+        if self.function_events is None:
+            return "<unfinished torch.autograd.profile>"
+        return repr(self.function_events)
+
+    def __str__(self):
+        if self.function_events is None:
+            return "<unfinished torch.autograd.profile>"
+        return str(self.function_events)
+
+    def _ensure_function_events(self):
+        """Process function events lazily if required"""
+        if self.function_events is not None:
+            return
+
         t0 = perf_counter_ns()
         parsed_results = self._parse_kineto_results(self.kineto_results)
         t1 = perf_counter_ns()
@@ -373,28 +395,13 @@ class profile:
         self.function_events._build_tree()
         t1 = perf_counter_ns()
         self._stats.function_events_build_tree_call_duration_us = int((t1 - t0) / 1000)
-
         self._stats.number_of_events = len(self.function_events)
-        self._stats.profiling_window_duration_sec = (
-            (self.profiling_end_time_ns - self.profiling_start_time_ns) * 1.0 / 1e9
-        )
 
-        if old_function_events:
-            for evt in old_function_events:
+        if self.old_function_events:
+            for evt in self.old_function_events:
                 self.function_events.append(evt)
-        return False
+            self.old_function_events = None
 
-    def __repr__(self):
-        if self.function_events is None:
-            return "<unfinished torch.autograd.profile>"
-        return repr(self.function_events)
-
-    def __str__(self):
-        if self.function_events is None:
-            return "<unfinished torch.autograd.profile>"
-        return str(self.function_events)
-
-    def _check_finish(self):
         if self.function_events is None:
             raise RuntimeError("Profiler didn't finish running")
 
@@ -408,7 +415,7 @@ class profile:
         header=None,
         top_level_events_only=False,
     ):
-        self._check_finish()
+        self._ensure_function_events()
         assert self.function_events is not None
         return self.function_events.table(
             sort_by=sort_by,
@@ -427,16 +434,16 @@ class profile:
         Exports the collected trace in Chrome JSON format. If kineto is enabled, only
         last cycle in schedule is exported.
         """
-        self._check_finish()
         if kineto_available():
             self.kineto_results.save(path)  # type: ignore[union-attr]
         else:
+            self._ensure_function_events()
             return self.function_events.export_chrome_trace(path)  # type: ignore[union-attr]
 
     export_chrome_trace.__doc__ = EventList.export_chrome_trace.__doc__
 
     def export_stacks(self, path: str, metric: str = "self_cpu_time_total"):
-        self._check_finish()
+        self._ensure_function_events()
         assert self.function_events is not None, "Expected profiling results"
         assert self.with_stack, "export_stacks() requires with_stack=True"
         return self.function_events.export_stacks(path, metric)
@@ -450,14 +457,14 @@ class profile:
         return _toggle_collection_dynamic(enabled, set(activities))
 
     def key_averages(self, group_by_input_shape=False, group_by_stack_n=0):
-        self._check_finish()
+        self._ensure_function_events()
         assert self.function_events is not None, "Expected profiling results"
         return self.function_events.key_averages(group_by_input_shape, group_by_stack_n)
 
     key_averages.__doc__ = EventList.key_averages.__doc__
 
     def total_average(self):
-        self._check_finish()
+        self._ensure_function_events()
         assert self.function_events is not None, "Expected profiling results"
         return self.function_events.total_average()
 
@@ -469,7 +476,7 @@ class profile:
 
         The total time is a sum of all self times across all the events.
         """
-        self._check_finish()
+        self._ensure_function_events()
         assert self.function_events is not None
         return self.function_events.self_cpu_time_total
 
