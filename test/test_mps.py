@@ -759,7 +759,6 @@ def mps_ops_modifier(ops):
         'ormqr': None,
         'pca_lowrank': None,
         'qr': None,
-        'quantile': None,
         'rsub': None,
         'scatter_reduceamax': None,
         'scatter_reduceamin': None,
@@ -916,6 +915,7 @@ def mps_ops_modifier(ops):
             'fft.rfft': None,
             'fft.rfft2': None,
             'fft.rfftn': None,
+            'quantile': None,
             'stft': None,
             # Error in TestConsistencyCPU.test_output_match_isin_cpu fails for integers,
             # not reproducible in later OS. Added assert to op if used in < 14.0
