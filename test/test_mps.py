@@ -729,7 +729,6 @@ def mps_ops_modifier(ops):
         'masked.median': None,
         'matrix_exp': None,
         'mode': None,
-        'nanquantile': None,
         'nanmedian': None,
         'native_dropout_backward': None,
         'normnuc': None,
@@ -915,12 +914,17 @@ def mps_ops_modifier(ops):
             'fft.rfft': None,
             'fft.rfft2': None,
             'fft.rfftn': None,
-            'quantile': None,
             'stft': None,
             # Error in TestConsistencyCPU.test_output_match_isin_cpu fails for integers,
             # not reproducible in later OS. Added assert to op if used in < 14.0
             'isin': [torch.int64, torch.int32, torch.int16, torch.uint8, torch.int8],
             'nn.functional.max_pool2d': [torch.uint8],
+        })
+
+    if product_version < 15.0:
+        UNIMPLEMENTED_XFAILLIST.update({
+            'quantile': None,
+            'nanquantile': None,
         })
 
     UNDEFINED_XFAILLIST = {
