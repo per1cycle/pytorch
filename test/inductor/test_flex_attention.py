@@ -1766,6 +1766,7 @@ class GraphModule(torch.nn.Module):
             return q >= kv
 
         block_mask = create_block_mask(mask_mod, 1, 1, Q_S, KV_S)
+        # block_mask = None
         attention = functools.partial(flex_attention, block_mask=block_mask)
 
         self.run_test_with_call(attention, Q_S=Q_S, KV_S=KV_S)
