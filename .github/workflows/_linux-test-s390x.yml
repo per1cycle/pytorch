@@ -30,8 +30,6 @@ on:
           Set the maximum (in minutes) how long the workflow should take to finish
       use-gha:
         required: false
-        type: string
-        default: ""
         description: If set to any value, upload to GHA. Otherwise upload to S3.
       dashboard-tag:
         required: false
@@ -54,7 +52,7 @@ jobs:
       - name: Checkout PyTorch
         uses: pytorch/pytorch/.github/actions/checkout-pytorch@main
         with:
-          no-sudo: ${{ inputs.build_environment == 'linux-s390x-binary-manywheel' }}
+          no-sudo: ${{ inputs.build-environment == 'linux-s390x-binary-manywheel' }}
 
       - name: Check if in a ARC runner
         shell: bash
@@ -241,7 +239,6 @@ jobs:
         with:
           file-suffix: ${{ github.job }}-${{ matrix.config }}-${{ matrix.shard }}-${{ matrix.num_shards }}-${{ matrix.runner }}_${{ steps.get-job-id.outputs.job-id }}
           use-gha: ${{ inputs.use-gha }}
-          s3-bucket: ${{ inputs.s3-bucket }}
 
       - name: Collect backtraces from coredumps (if any)
         if: always()
