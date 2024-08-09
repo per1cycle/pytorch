@@ -274,7 +274,7 @@ class TestProfiler(TestCase):
             c = b.sum()
             c.backward()
 
-        prof._ensure_function_events()
+        p._ensure_function_events()
         for e in p.function_events:
             if "aten::add" in e.name or "AddBackward" in e.name:
                 self.assertTrue(any("test_profiler" in entry for entry in e.stack))
@@ -1854,13 +1854,14 @@ assert KinetoStepTracker.current_step() == initial_step + 2 * niters
             ),
             acc_events=acc_events,
         ) as prof:
+            prof.profiler.acc_events = True
             for i in range(100):
                 torch.add(1, 2)
                 prof.step()
+        print(prof.key_averages())
         for ev in prof.key_averages():
             if ev.key == "aten::add":
                 return ev.count
-        print(prof.key_averages())
         return 0
 
     @skipIfTorchDynamo("profiler gets ignored if dynamo activated")
