@@ -506,6 +506,7 @@ struct GlobalStateGuard {
     auto& ctx = at::globalContext();
     _grad_mode = at::GradMode::is_enabled();
     _torch_function = torch::torch_function_enabled();
+    _torch_function_mode = at::impl::torch_function_mode_enabled();
     _deterministic_algorithms = ctx.deterministicAlgorithms();
     _deterministic_algorithms_warn_only = ctx.deterministicAlgorithmsWarnOnly();
     _allow_tf32 = ctx.allowTF32CuBLAS();
@@ -519,6 +520,7 @@ struct GlobalStateGuard {
     auto& ctx = at::globalContext();
     return (_grad_mode == at::GradMode::is_enabled() &&
             _torch_function == torch::torch_function_enabled() &&
+            _torch_function_mode == at::impl::torch_function_mode_enabled() &&
             _deterministic_algorithms == ctx.deterministicAlgorithms() &&
             _deterministic_algorithms_warn_only ==
                 ctx.deterministicAlgorithmsWarnOnly() &&
@@ -556,6 +558,7 @@ struct GlobalStateGuard {
 
   bool _grad_mode;
   bool _torch_function;
+  bool _torch_function_mode;
   bool _deterministic_algorithms;
   bool _deterministic_algorithms_warn_only;
   bool _allow_tf32;
