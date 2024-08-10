@@ -1459,6 +1459,16 @@ GLOBAL_KEY_PREFIX = "__dict_key"
 from torch._subclasses import UnsupportedFakeTensorException  # noqa: F401
 
 
+def get_safe_global_name(tx, root, obj):
+    # The global_mangled_class_name should be different for different
+    # invocations of torch.compile. Otherwise, we can run into a situation
+    # where multiple torch.compile invocations re-use the same global name,
+    # but the global's lifetime is tied to the first invocation (and
+    # may be deleted when the first torch.compile invocation is deleted)
+    # We mangle it based off of the output_graph's id.
+    return f"{root}_{id(obj)}_c{tx.output.compile_id}"
+
+
 def wrap_fake_exception(fn):
     try:
         return fn()
@@ -3027,6 +3037,14 @@ def get_torch_function_mode_stack():
         _push_on_torch_function_stack(mode)
 
     return [mode for mode in stack if type(mode) not in IGNORED_MODES]
+
+
+def set_torch_function_mode_stack(stack):
+    for i in range(_len_torch_function_stack()):
+        _pop_torch_function_stack()
+
+    for mode in reversed(stack):
+        _push_on_torch_function_stack(mode)
 
 
 def verify_guard_fn_signature(value):
