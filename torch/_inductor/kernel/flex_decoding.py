@@ -11,7 +11,11 @@ from ..ir import FixedLayout, FlexibleLayout
 from ..lowering import empty, empty_strided, lowerings
 from ..runtime.runtime_utils import next_power_of_2
 from ..select_algorithm import autotune_select_algorithm, TritonTemplate
-from .flex_attention import compute_forward_block, compute_next_offset_func
+from .flex_attention import (
+    compute_forward_block,
+    compute_next_offset_func,
+    fwd_compute_block_mn,
+)
 
 
 aten = torch.ops.aten
@@ -179,7 +183,7 @@ flex_decoding_template = TritonTemplate(
     offs_n = tl.arange(0, BLOCK_N) + off_n
 
     acc, l_i, m_i = forward_inner(
-        q, K_block_ptr, V_block_ptr,
+        q, K_block_ptr, V_block_ptr, Q_LEN, KV_LEN,
         # accumulatd values
         acc, l_i, m_i,
         #offsets
@@ -224,7 +228,7 @@ flex_decoding_template = TritonTemplate(
         offs_n = tl.arange(0, BLOCK_N) + off_n
 
         acc, l_i, m_i = forward_inner(
-            q, K_block_ptr, V_block_ptr,
+            q, K_block_ptr, V_block_ptr, Q_LEN, KV_LEN,
             # accumulatd values
             acc, l_i, m_i,
             #offsets
@@ -275,7 +279,8 @@ flex_decoding_template = TritonTemplate(
     {{store_output(("idx_z", "idx_h", "idx_t", "idx_m", "idx_d"), "acc", "mask")}}
  """
     + compute_forward_block
-    + compute_next_offset_func,
+    + compute_next_offset_func
+    + fwd_compute_block_mn,
 )
 
 

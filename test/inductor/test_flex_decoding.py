@@ -909,6 +909,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             "ROWS_GUARANTEED_SAFE": False,
             "PRESCALE_QK": False,
             "OUTPUT_LOGSUMEXP": True,
+            "IS_DIVISIBLE": True,
         }
 
         @torch.compile
@@ -990,6 +991,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             "ROWS_GUARANTEED_SAFE": False,
             "PRESCALE_QK": False,
             "OUTPUT_LOGSUMEXP": True,
+            "IS_DIVISIBLE": True,
         }
 
         @torch.compile
@@ -1032,6 +1034,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             "ROWS_GUARANTEED_SAFE": False,
             "PRESCALE_QK": False,
             "OUTPUT_LOGSUMEXP": True,
+            "IS_DIVISIBLE": True,
         }
 
         @torch.compile

@@ -679,7 +679,9 @@ def flex_attention(
     mask_graph_buffer = build_subgraph_buffer(
         mask_graph_placeholder_inps + list(mask_mod_other_buffers), mask_graph
     )
+    kernel_options = dict(kernel_options)
     if _use_flex_decoding(query):
+        kernel_options["IS_DIVISIBLE"] = True
         return create_flex_decoding_kernel(
             query,
             key,
@@ -722,7 +724,6 @@ def flex_attention(
         dtype=torch.float32,  # The logsumexp is always stored in fp32 regardless of the input dtype
         device=query.get_device(),
     )
-    kernel_options = dict(kernel_options)
     kernel_options["SM_SCALE"] = scale
     # Inside of Triton kernel, only apply partial masking if partial blocks are computed.
     # full_kv_num_blocks is None if partial blocks are not computed
@@ -1396,8 +1397,6 @@ def bwd_dkdv_compute_block_mn(
     dpT = tl.dot(v, tl.trans(do))
     dsT = pT * (dpT - Di[None, :])
     # ~~~~~~~~~~~~~~~~~~~ Apply joint modification  ~~~~~~~~~~~~~~~~~~~
-    m = offs_m1[None, :]
-    n = offs_n1[:, None]
     {{ modification(
         subgraph_number=1,
         output_name = "grad_scores",
