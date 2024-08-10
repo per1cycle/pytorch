@@ -7,7 +7,7 @@ import torch
 import torch.utils._pytree as pytree
 from torch._C import DispatchKey
 from torch._higher_order_ops.torchbind import call_torchbind
-from torch._ops import HigherOrderOperator
+from torch._ops import HigherOrderOperator, OpOverload
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.proxy_tensor import (
     disable_proxy_modes_tracing,
@@ -20,7 +20,7 @@ class _EffectType(Enum):
     ORDERED = "Ordered"
 
 
-OpType = Union[torch._ops.HigherOrderOperator, torch._ops.OpOverload]
+OpType = Union[HigherOrderOperator, OpOverload]
 
 
 SIDE_EFFECTS: Dict[OpType, _EffectType] = {
@@ -30,9 +30,7 @@ SIDE_EFFECTS: Dict[OpType, _EffectType] = {
 
 
 def _register_effectful_op(op: OpType, effect: _EffectType):
-    assert isinstance(
-        op, (torch._ops.OpOverload, torch._ops.HigherOrderOperator)
-    ) and not has_aliasing(op)
+    assert isinstance(op, (OpOverload, HigherOrderOperator)) and not has_aliasing(op)
     if op in SIDE_EFFECTS and SIDE_EFFECTS[op] != effect:
         raise RuntimeError(
             f"Already registered effect type {SIDE_EFFECTS[op]} to op {op}, "
@@ -62,10 +60,10 @@ class WithEffects(HigherOrderOperator):
         self,
         token,
         op: OpType,
-        *args: Tuple[Any, ...],
-        **kwargs: Dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
     ) -> Tuple[Any, ...]:
-        assert isinstance(op, (torch._ops.HigherOrderOperator, torch._ops.OpOverload))
+        assert isinstance(op, (HigherOrderOperator, OpOverload))
         assert not has_aliasing(op), "Ops with aliasing is not supported"
         assert has_effects(op, args, kwargs)
         assert isinstance(kwargs, dict)
@@ -77,7 +75,7 @@ with_effects = WithEffects()
 
 def has_aliasing(op: OpType):
     # NOT FOR PUBLIC USE
-    if isinstance(op, torch._ops.HigherOrderOperator):
+    if isinstance(op, HigherOrderOperator):
         return op not in SIDE_EFFECTS
 
     for arg in op._schema.arguments:
@@ -96,7 +94,7 @@ def has_effects(op, args, kwargs) -> bool:
         return False
 
     return (
-        isinstance(op, (torch._ops.HigherOrderOperator, torch._ops.OpOverload))
+        isinstance(op, (HigherOrderOperator, OpOverload))
         and not has_aliasing(op)
         and get_effect_key(op, args, kwargs) is not None
     )
@@ -119,9 +117,9 @@ def get_effect_key(op, args, kwargs) -> Optional[_EffectType]:
 @with_effects.py_impl(DispatchKey.CompositeExplicitAutograd)
 def with_effects_dense(
     token: torch.Tensor,
-    op: torch._ops.OpOverload,
-    *args: Tuple[Any, ...],
-    **kwargs: Dict[str, Any],
+    op: OpOverload,
+    *args: Any,
+    **kwargs: Any,
 ) -> Tuple[torch.Tensor, ...]:
     out = op(*args, **kwargs)
     new_token = torch.tensor([])
@@ -134,9 +132,9 @@ def with_effects_dense(
 def with_effects_fake(
     mode,
     token: torch.Tensor,
-    op: torch._ops.OpOverload,
-    *args: Tuple[Any, ...],
-    **kwargs: Dict[str, Any],
+    op: OpOverload,
+    *args: Any,
+    **kwargs: Any,
 ) -> Tuple[torch.Tensor, ...]:
     with mode:
         result = with_effects_dense(token, op, *args, **kwargs)
@@ -147,9 +145,9 @@ def with_effects_fake(
 def with_effects_proxy(
     mode,
     token: torch.Tensor,
-    op: torch._ops.OpOverload,
-    *args: Tuple[Any, ...],
-    **kwargs: Dict[str, Any],
+    op: OpOverload,
+    *args: Any,
+    **kwargs: Any,
 ) -> Tuple[torch.Tensor, ...]:
     with disable_proxy_modes_tracing():
         out = with_effects(token, op, *args, **kwargs)
@@ -179,7 +177,7 @@ with_effects.fallthrough(DispatchKey.AutogradCUDA)
 
 
 def _get_schema(op, args) -> torch.FunctionSchema:
-    if isinstance(op, torch._ops.OpOverload):
+    if isinstance(op, OpOverload):
         return op._schema
     elif op == call_torchbind:
         return getattr(args[0], args[1]).schema

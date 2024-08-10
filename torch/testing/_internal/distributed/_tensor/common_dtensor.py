@@ -6,13 +6,13 @@ import itertools
 import sys
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, cast, Dict, Iterator, List, Sequence, Tuple, TypeVar
+from typing import Callable, cast, Dict, Iterator, List, Sequence, Tuple, TypeVar
+from typing_extensions import ParamSpec
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-
 from torch.distributed._tensor import DeviceMesh, distribute_tensor, Replicate, Shard
 from torch.distributed._tensor.placement_types import Placement
 from torch.distributed.tensor.parallel import (
@@ -25,12 +25,12 @@ from torch.distributed.tensor.parallel import (
 from torch.testing._internal.common_distributed import (
     MultiProcessTestCase,
     MultiThreadedTestCase,
-    skip_if_lt_x_gpu,
     run_subtests,
+    skip_if_lt_x_gpu,
     TEST_SKIPS,
 )
-
 from torch.utils._pytree import tree_flatten, tree_unflatten, TreeSpec
+
 
 DEVICE_TYPE = (
     "cuda" if torch.cuda.is_available() and torch.cuda.device_count() > 1 else "cpu"
@@ -352,7 +352,8 @@ class DTensorTestBase(MultiProcessTestCase):
         return run_subtests(self, *args, **kwargs)
 
 
-TestFunc = Callable[[object], object]
+_P = ParamSpec("_P")
+TestFunc = Callable[_P, None]
 
 
 # wrapper to initialize comms (processgroup)
@@ -360,9 +361,7 @@ def with_comms(func: TestFunc) -> TestFunc:
     assert func is not None
 
     @wraps(func)  # pyre-ignore[6]
-    def wrapper(
-        self, *args: Tuple[object], **kwargs: Dict[str, Any]  # type: ignore[misc]
-    ) -> None:
+    def wrapper(self, *args: _P.args, **kwargs: _P.kwargs) -> None:
         # if enough GPU we can use GPU, otherwise we fallback to CPU
         if not torch.cuda.is_available() or torch.cuda.device_count() < self.world_size:
             self.device_type = "cpu"
@@ -372,7 +371,7 @@ def with_comms(func: TestFunc) -> TestFunc:
         self.init_pg()
 
         try:
-            func(self, *args, **kwargs)  # type: ignore[misc]
+            func(self, *args, **kwargs)
         except Exception as e:
             dist.destroy_process_group()
             raise e
