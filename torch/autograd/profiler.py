@@ -383,7 +383,8 @@ class profile:
             return
 
         t0 = perf_counter_ns()
-        parsed_results = self._parse_kineto_results(self.kineto_results)
+        if self.kineto_results:
+            parsed_results = self._parse_kineto_results(self.kineto_results)
         t1 = perf_counter_ns()
         self._stats.parse_kineto_call_duration_us = int((t1 - t0) / 1000)
 
