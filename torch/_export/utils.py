@@ -6,15 +6,15 @@ import math
 import operator
 import re
 from inspect import Parameter
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Type
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, TYPE_CHECKING
 
 import torch
+from torch._guards import detect_fake_mode
 from torch._subclasses.fake_tensor import FakeTensor
-from torch.export import ExportedProgram
-from torch.export.exported_program import (
-    _name_hoo_subgraph_placeholders,
-    _rename_without_collisions,
-)
+if TYPE_CHECKING:
+    from torch.export import ExportedProgram
+    from torch.export.graph_signature import ExportGraphSignature
+    from torch._export.passes.lift_constants_pass import ConstantAttrMap
 from torch.export.graph_signature import InputKind, OutputKind
 from torch.utils._pytree import (
     _register_pytree_node,
@@ -40,6 +40,76 @@ placeholder_prefixes = {
     InputKind.CUSTOM_OBJ: "obj_",
     InputKind.TOKEN: "token",
 }
+
+
+def _collect_constant_attrs(graph_signature, constants, mod) -> 'ConstantAttrMap':
+    # the exported module will store constants & non-persistent buffers such that
+    # retracing treats them as persistent buffers, so we inform the constants lifting pass
+    # and overwrite the new graph signature using the previous program.
+    from torch._export.passes.lift_constants_pass import ConstantAttrMap
+    constant_attrs = ConstantAttrMap()
+    non_persistent_buffers = {
+        spec.target
+        for spec in graph_signature.input_specs
+        if spec.kind == InputKind.BUFFER and not spec.persistent
+    }
+    for name, value in constants.items():
+        if name in non_persistent_buffers:
+            continue
+        # recursive getattr
+        _mod = mod
+        *atoms, attr = name.split(".")
+        for atom in atoms:
+            _mod = getattr(_mod, atom)
+        # remove as buffer, reassign as constant/non-persistent buffer
+        _mod._buffers.pop(attr, None)
+        setattr(_mod, attr, value)
+        constant_attrs.add(value, name)
+    return constant_attrs
+
+
+def _get_shape_env_from_gm(gm: torch.fx.GraphModule):
+    vals = [
+        node.meta["val"]
+        for node in gm.graph.nodes
+        if node.meta.get("val", None) is not None
+    ]
+
+    fake_mode = _detect_fake_mode_from_gm(gm)
+    if fake_mode is not None:
+        return fake_mode.shape_env
+    for v in vals:
+        if isinstance(v, torch.SymInt):
+            return v.node.shape_env
+
+
+def _rename_without_collisions(
+    name_map: Dict[str, str],
+    orig_name: str,
+    name: str,
+    is_placeholder: bool = False,
+):
+    """
+    Renames nodes to avoid name collisions, with suffixing.
+    name_map: map from original name to new name
+    orig_name: mapping key
+    name: candidate name (potentially suffixed, e.g. mul_2)
+    is_placeholder: if the node is a placeholder, avoid detecting suffix
+    """
+    if name in name_map.values():
+        # non-placeholder nodes may be suffixed with the count
+        # instead of adding another suffix, we will try to increment it
+        match = re.match(r"(.*)_(\d+)", name)
+        if match and not is_placeholder:
+            name, n = match.group(1), int(match.group(2))
+        else:
+            n = 0
+        while (dup_name := f"{name}_{n + 1}") in name_map.values():
+            n += 1
+        name_map[orig_name] = dup_name
+    else:
+        name_map[orig_name] = name
+    return name_map[orig_name]
 
 
 def _check_input_constraints_for_graph(
@@ -217,7 +287,7 @@ def register_dataclass_as_pytree_node(
     )
 
 
-def is_param(program: ExportedProgram, node: torch.fx.Node) -> bool:
+def is_param(program: 'ExportedProgram', node: torch.fx.Node) -> bool:
     """
     Checks if the given node is a parameter within the exported program
     """
@@ -226,7 +296,7 @@ def is_param(program: ExportedProgram, node: torch.fx.Node) -> bool:
 
 
 def get_param(
-    program: ExportedProgram,
+    program: 'ExportedProgram',
     node: torch.fx.Node,
 ) -> Optional[torch.nn.Parameter]:
     """
@@ -241,7 +311,7 @@ def get_param(
     return None
 
 
-def is_buffer(program: ExportedProgram, node: torch.fx.Node) -> bool:
+def is_buffer(program: 'ExportedProgram', node: torch.fx.Node) -> bool:
     """
     Checks if the given node is a buffer within the exported program
     """
@@ -250,7 +320,7 @@ def is_buffer(program: ExportedProgram, node: torch.fx.Node) -> bool:
 
 
 def get_buffer(
-    program: ExportedProgram,
+    program: 'ExportedProgram',
     node: torch.fx.Node,
 ) -> Optional[torch.Tensor]:
     """
@@ -269,7 +339,7 @@ def get_buffer(
 
 
 def is_lifted_tensor_constant(
-    program: ExportedProgram,
+    program: 'ExportedProgram',
     node: torch.fx.Node,
 ) -> bool:
     """
@@ -280,7 +350,7 @@ def is_lifted_tensor_constant(
 
 
 def get_lifted_tensor_constant(
-    program: ExportedProgram,
+    program: 'ExportedProgram',
     node: torch.fx.Node,
 ) -> Optional[torch.Tensor]:
     """
@@ -475,9 +545,51 @@ def _bind_signature_to_inputs(mod, fake_args, fake_kwargs):
     return sig.bind(*fake_args, **fake_kwargs).arguments
 
 
+def _name_hoo_subgraph_placeholders(gm: torch.fx.GraphModule) -> None:
+    """
+    Propagate placeholder names from the top-level graph into HigherOrderOp subgraphs,
+    and handle collisions with non-placeholders by count suffixing.
+    Different HOO subgraph types have different input schemas, so we first enumerate them
+    and gather the top-level named placeholder nodes.
+    """
+    # gather all HOO subgraphs and their top-level named placeholder nodes
+    subgraph_ph_tuples: List[Tuple[torch.fx.GraphModule, List[torch.fx.Node]]] = []
+    for node in gm.graph.nodes:
+        if node.op == "call_function" and isinstance(
+            node.target, torch._ops.HigherOrderOperator
+        ):
+            # HOO subgraphs have varying input schemas, so we enumerate them there
+            if node.target._name == "cond":
+                _, true_graph, false_graph, cond_args = node._args
+                subgraph_ph_tuples.append((getattr(gm, true_graph.target), cond_args))
+                subgraph_ph_tuples.append((getattr(gm, false_graph.target), cond_args))
+            elif node.target._name == "wrap_with_set_grad_enabled":
+                subgraph, phs = node._args[1], node._args[2:]
+                subgraph_ph_tuples.append((getattr(gm, subgraph.target), phs))
+            elif node.target._name == "map_impl":
+                body_graph, array, args = node._args
+                subgraph_ph_tuples.append(
+                    (getattr(gm, body_graph.target), array + args)
+                )
+
+    # propagate names
+    for subgraph, hoo_phs in subgraph_ph_tuples:
+        name_map: Dict[str, str] = {}
+        for i, node in enumerate(subgraph.graph.nodes):
+            if i < len(hoo_phs):  # placeholder, retain name
+                name_map[node.name] = hoo_phs[i].name
+                node.name = node.target = hoo_phs[i].name
+            else:  # non-placeholder, check for collisions
+                node.name = _rename_without_collisions(name_map, node.name, node.name)
+
+        # recurse and recompile
+        _name_hoo_subgraph_placeholders(subgraph)
+        subgraph.recompile()
+
+
 def placeholder_naming_pass(
     gm: torch.fx.GraphModule,
-    export_graph_signature: torch.export.ExportGraphSignature,
+    export_graph_signature: 'ExportGraphSignature',
     mod: torch.nn.Module,
     fake_args,
     fake_kwargs,
