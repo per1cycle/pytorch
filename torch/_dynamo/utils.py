@@ -59,6 +59,11 @@ import torch._inductor.config as inductor_config
 import torch.fx.experimental.symbolic_shapes
 import torch.utils._pytree as pytree
 from torch import fx
+from torch._C import (
+    _len_torch_function_stack,
+    _pop_torch_function_stack,
+    _push_on_torch_function_stack,
+)
 from torch._dispatch.python import enable_python_dispatcher
 from torch._guards import Source, TracingContext
 from torch._subclasses.meta_utils import is_sparse_compressed
@@ -3008,6 +3013,20 @@ def _disable_saved_tensors_hooks_during_tracing():
 
 def is_parameter_freezing():
     return torch._inductor.config.freezing and not torch.is_grad_enabled()
+
+
+def get_torch_function_mode_stack():
+    from .variables.torch_function import IGNORED_MODES
+    stack = []
+
+    for i in range(_len_torch_function_stack()):
+        mode = _pop_torch_function_stack()
+        stack.append(mode)
+
+    for mode in reversed(stack):
+        _push_on_torch_function_stack(mode)
+
+    return [mode for mode in stack if type(mode) not in IGNORED_MODES]
 
 
 def verify_guard_fn_signature(value):
