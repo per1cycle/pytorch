@@ -274,7 +274,6 @@ class TestProfiler(TestCase):
             c = b.sum()
             c.backward()
 
-        p._ensure_function_events()
         for e in p.function_events:
             if "aten::add" in e.name or "AddBackward" in e.name:
                 self.assertTrue(any("test_profiler" in entry for entry in e.stack))
@@ -868,7 +867,6 @@ class TestProfiler(TestCase):
 
         def judge(expected_event_count, prof):
             actual_event_count = {}
-            prof._ensure_function_events()
             for e in prof.function_events:
                 if "#" in e.name:
                     key = e.name
